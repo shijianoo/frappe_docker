@@ -1,0 +1,257 @@
+name: frappe_docker
+services:
+  backend:
+    restart: unless-stopped
+    environment:
+      GUNICORN_THREADS: "4"
+      GUNICORN_TIMEOUT: "120"
+      GUNICORN_WORKERS: "2"
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+  configurator:
+    restart: on-failure
+    command:
+      - |
+        ls -1 apps > sites/apps.txt; bench set-config -g db_host $$DB_HOST; bench set-config -gp db_port $$DB_PORT; bench set-config -g redis_cache "redis://$$REDIS_CACHE"; bench set-config -g redis_queue "redis://$$REDIS_QUEUE"; bench set-config -g redis_socketio "redis://$$REDIS_QUEUE"; bench set-config -gp socketio_port $$SOCKETIO_PORT; bench set-config -g chromium_path /usr/lib/chromium/chromium-headless-shell;
+    entrypoint:
+      - bash
+      - -c
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      SOCKETIO_PORT: "9000"
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+      redis-cache:
+        condition: service_started
+        required: true
+      redis-queue:
+        condition: service_started
+        required: true
+  db:
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-snapshot-isolation=OFF
+    environment:
+      MARIADB_AUTO_UPGRADE: "1"
+      MYSQL_ROOT_PASSWORD: "123"
+    image: mariadb:11.8
+    networks:
+      default: null
+    volumes:
+      - type: volume
+        source: db-data
+        target: /var/lib/mysql
+        volume: {}
+    healthcheck:
+      test:
+        - CMD
+        - healthcheck.sh
+        - --connect
+        - --innodb_initialized
+      timeout: 5s
+      interval: 5s
+      retries: 5
+      start_period: 5s
+  frontend:
+    restart: unless-stopped
+    command:
+      - nginx-entrypoint.sh
+    environment:
+      BACKEND: backend:8000
+      CLIENT_MAX_BODY_SIZE: 50m
+      FRAPPE_SITE_NAME_HEADER: $$host
+      NGINX_LISTEN_PORT: "8080"
+      PROXY_READ_TIMEOUT: "120"
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: 'off'
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      backend:
+        condition: service_started
+        required: true
+      websocket:
+        condition: service_started
+        required: true
+    ports:
+      - mode: ingress
+        target: 8080
+        published: "8080"
+        protocol: tcp
+  queue-long:
+    restart: unless-stopped
+    command:
+      - bench
+      - worker
+      - --queue
+      - long,default,short
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+  queue-short:
+    restart: unless-stopped
+    command:
+      - bench
+      - worker
+      - --queue
+      - short,default
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+  redis-cache:
+    restart: unless-stopped
+    image: redis:8.6-alpine
+    networks:
+      default: null
+  redis-queue:
+    restart: unless-stopped
+    image: redis:8.6-alpine
+    networks:
+      default: null
+    volumes:
+      - type: volume
+        source: redis-queue-data
+        target: /data
+        volume: {}
+  scheduler:
+    restart: unless-stopped
+    command:
+      - bench
+      - schedule
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+  websocket:
+    restart: unless-stopped
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    image: shioa/erpnext:v16.53.0
+    networks:
+      default: null
+    platform: linux/amd64
+    pull_policy: always
+    volumes:
+      - type: volume
+        source: sites
+        target: /home/frappe/frappe-bench/sites
+        volume: {}
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+        required: true
+networks:
+  default:
+    name: frappe_docker_default
+volumes:
+  db-data:
+    name: frappe_docker_db-data
+    driver: local
+    driver_opts:
+      device: D:\cache\erpnext-data\db-data
+      o: bind
+      type: none
+  redis-queue-data:
+    name: frappe_docker_redis-queue-data
+    driver: local
+    driver_opts:
+      device: D:\cache\erpnext-data\redis-queue
+      o: bind
+      type: none
+  sites:
+    name: frappe_docker_sites
+    driver: local
+    driver_opts:
+      device: D:\cache\erpnext-data\sites-data
+      o: bind
+      type: none
+x-backend-defaults:
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+  image: shioa/erpnext:v16.53.0
+  pull_policy: always
+  restart: unless-stopped
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+x-customizable-image:
+  image: shioa/erpnext:v16.53.0
+  pull_policy: always
+  restart: unless-stopped
+x-depends-on-configurator:
+  depends_on:
+    configurator:
+      condition: service_completed_successfully

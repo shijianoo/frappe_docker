@@ -1,0 +1,68 @@
+通过docker云构建
+apps.json定义需要安装哪些应用以及tag版本
+Containerfile里面的
+docker buildx build --platform linux/amd64 --push --no-cache --secret id=apps_json,src=apps.json --tag=shioa/erpnext:v16.53.0 --file=images/layered/Containerfile .
+
+FRAPPE_SITE_NAME_HEADER
+有独立真实域名（或多租户）就不写，让建站名对齐域名；用纯 IP、localhost 或单租户省心访问就必写，且值必须等于建站名。
+
+启动容器集群
+docker compose -p erp-next `
+  -f compose.yaml `
+  -f overrides/compose.mariadb.yaml `
+  -f overrides/compose.redis.yaml `
+  -f overrides/compose.noproxy.yaml `
+  -f overrides/compose.bind-mount-sites.yaml `
+  -f overrides/compose.bind-mount-db-data.yaml `
+  -f overrides/compose.bind-mount-redis-queue.yaml `
+  -f overrides/compose.backup-cron.yaml `
+  up -d
+
+停止容器集群
+docker compose -p erp-next `
+  -f compose.yaml `
+  -f overrides/compose.mariadb.yaml `
+  -f overrides/compose.redis.yaml `
+  -f overrides/compose.noproxy.yaml `
+  -f overrides/compose.bind-mount-sites.yaml `
+  -f overrides/compose.bind-mount-db-data.yaml `
+  -f overrides/compose.bind-mount-redis-queue.yaml `
+  -f overrides/compose.backup-cron.yaml `
+  down
+
+安装应用
+docker compose -p erp-next exec backend bench new-site frontend `
+  --mariadb-user-host-login-scope=% `
+  --db-root-password "你的MariaDB密码" `
+  --admin-password "你的管理员密码" `
+  --install-app erpnext `
+  --install-app hrms `
+
+
+
+分步骤启动
+
+只生成最终的yaml文件
+docker compose `
+  -f compose.yaml `
+  -f overrides/compose.mariadb.yaml `
+  -f overrides/compose.redis.yaml `
+  -f overrides/compose.noproxy.yaml `
+  -f overrides/compose.bind-mount-sites.yaml `
+  -f overrides/compose.bind-mount-db-data.yaml `
+  -f overrides/compose.bind-mount-redis-queue.yaml `
+  -f overrides/compose.backup-cron.yaml `
+  config -o docker-compose.prod.yaml
+
+启动容器集群
+docker compose -p erp-next -f docker-compose.prod.yaml up -d
+
+安装应用
+docker compose -p erp-next -f docker-compose.prod.yaml exec backend bench new-site frontend `
+  --mariadb-user-host-login-scope=% `
+  --db-root-password "你的MariaDB密码" `
+  --admin-password "你的管理员密码" `
+  --install-app erpnext `
+  --install-app hrms `
+
+
